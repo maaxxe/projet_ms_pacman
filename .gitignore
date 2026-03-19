@@ -1,5 +1,5 @@
 *.pth
 udes_conda_26/
 __pycache__/
-*.mp4
+
 anaconda3/
