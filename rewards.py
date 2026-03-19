@@ -8,9 +8,10 @@ CUSTOM_REWARDS = {
     "ghost": 5.0,         # A mangé un fantôme vulnérable (le jeu donne 200, 400, etc.)
     "fruit": 3.0,         # A mangé un fruit (le jeu donne 100, 200, etc.)
     "death": -10.0,       # A perdu une vie (pénalité)
-    "step_penalty": -0.01 # Petite pénalité de temps à chaque frame pour l'inciter à avancer
+    "step_penalty": -0.01, # Petite pénalité de temps à chaque frame pour l'inciter à avancer
+    "level_clear": 200.0
 }
-
+DOTS_LEVEL = 158
 class CustomRewardEnv(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
@@ -44,5 +45,10 @@ class CustomRewardEnv(gym.Wrapper):
         if current_lives < self.lives:
             custom_reward += CUSTOM_REWARDS["death"]
             self.lives = current_lives
+        if self.dots_eaten == DOTS_LEVEL:
+            custom_reward += CUSTOM_REWARDS["level_clear"]
+            print(f"\033[93m[REWARD] Jackpot Level Clear accordé ! (+{CUSTOM_REWARDS['level_clear']})\033[0m")
+            # On passe à 155 pour ne pas donner le bonus en boucle au prochain step
+            self.dots_eaten += 1 
 
         return obs, custom_reward, terminated, truncated, info

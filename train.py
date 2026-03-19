@@ -26,7 +26,7 @@ SAVE_EVERY_EPISODES = 500
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-TOTAL_EPISODES = 3000
+TOTAL_EPISODES = 3000*100
 BUFFER_SIZE = 100_000
 BATCH_SIZE = 32
 GAMMA = 0.99
@@ -39,6 +39,9 @@ EPS_START = 1.0
 EPS_END = 0.05
 EPS_DECAY_EPISODES = 1500
 MAX_EPISODE_STEPS = 20_000
+
+DOTS_LEVEL = 158
+
 
 running = True
 
@@ -235,7 +238,7 @@ def train():
             "timestamp": float(time.time() - start_time)
         }
         
-        if (dots_manges >= 148):
+        if (dots_manges >= DOTS_LEVEL ):
             print("\033[92m[FINISH] L'agent a terminé un tableau !\033[0m")
             
         print(

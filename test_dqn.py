@@ -6,6 +6,9 @@ from pathlib import Path
 from wrappers import make_train_env
 from dqn_model import DQN
 
+
+DOTS_LEVEL = 158
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CKPT_PATH = Path(__file__).resolve().parent / "checkpoints" / "mspacman_dqn.pth"
 
@@ -55,14 +58,14 @@ def play():
         total_reward += reward
         
         # Ralentir un peu le rendu pour que ce soit visible à l'oeil nu
-        time.sleep(0.02)
+        time.sleep(0.00)
 
     print("\n--- RÉSULTATS DE LA PARTIE ---")
     print(f"Score final    : {total_reward}")
     print(f"Points mangés  : {dots_manges}")
     print(f"Fantômes mangés: {ghosts_eaten}")
     
-    if dots_manges >= 148:
+    if dots_manges >= DOTS_LEVEL:
         print("\033[92m[FINISH] L'agent a terminé un tableau !\033[0m")
         
     env.close()
