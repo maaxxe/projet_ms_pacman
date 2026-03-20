@@ -15,6 +15,7 @@ VIDEO_DIR = Path(__file__).resolve().parent / "videos"
 VIDEO_DIR.mkdir(exist_ok=True)
 
 def record_best_runs(num_episodes, min_dots):
+    nb=0
     # L'astuce est ici : render_mode="rgb_array" capture les images sans ouvrir de fenêtre
     env = make_train_env(render_mode="rgb_array", clip_rewards=False)
     
@@ -63,9 +64,11 @@ def record_best_runs(num_episodes, min_dots):
 
         # 3. On ne sauvegarde QUE si la condition est remplie
         if dots_manges >= min_dots:
+            nb+=1
             video_name = f"pacman_win_{dots_manges}dots_ep{ep}.mp4"
             video_path = VIDEO_DIR / video_name
             print(f"🌟 VICTOIRE ! Enregistrement de {video_name} (Patientez...)")
+	        
             
             # FPS=30 ou 60 selon la vitesse à laquelle tu veux regarder la vidéo
             imageio.mimsave(str(video_path), frames, fps=60)
@@ -75,6 +78,7 @@ def record_best_runs(num_episodes, min_dots):
 
     env.close()
     print("Terminé ! Vérifiez le dossier 'videos'.")
+    print(f"Il y a {nb} enregistrements")
 
 if __name__ == "__main__":
-    record_best_runs(num_episodes=50, min_dots=155)
+    record_best_runs(num_episodes=50, min_dots=159)
