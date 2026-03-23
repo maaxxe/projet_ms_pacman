@@ -1,4 +1,11 @@
-# plot_progress.py
+"""
+@file      plot_progress.py
+@brief     Visualise les métriques d'entraînement depuis log.json.
+@details   Lit log.json et trace 8 graphiques : score, moyenne 10 épisodes,
+           epsilon, loss, steps/épisode, taille buffer, dots mangés, fantômes.
+           Lance directement avec : python plot_progress.py
+"""
+
 import json
 import math
 import matplotlib.pyplot as plt
@@ -13,21 +20,21 @@ with open(LOG_PATH, "r", encoding="utf-8") as f:
 if not log:
     raise ValueError("log.json est vide.")
 
-# Trier correctement les épisodes: episode_1, episode_2, ...
+# Tri correct des épisodes : episode_1, episode_2, ...
 episode_keys = sorted(log.keys(), key=lambda k: int(k.split("_")[1]))
 data = [log[k] for k in episode_keys]
 
-episodes = [int(k.split("_")[1]) for k in episode_keys]
-epsilons = [d.get("epsilon", math.nan) for d in data]
-losses = [d["loss"] if d.get("loss") is not None else math.nan for d in data]
-
-scores = [d.get("score", d.get("episode_reward", math.nan)) for d in data]
+# Extraction des métriques (math.nan si clé absente pour compatibilité)
+episodes      = [int(k.split("_")[1]) for k in episode_keys]
+epsilons      = [d.get("epsilon", math.nan) for d in data]
+losses        = [d["loss"] if d.get("loss") is not None else math.nan for d in data]
+scores        = [d.get("score", d.get("episode_reward", math.nan)) for d in data]
 episode_steps = [d.get("episode_steps", d.get("episode_length", math.nan)) for d in data]
-avg_score_10 = [d.get("avg_score_10", d.get("avg_reward_10", math.nan)) for d in data]
-buffer_sizes = [d.get("buffer_size", math.nan) for d in data]
-dots_manges = [d.get("dots_manges", math.nan) for d in data]
-ghosts_eaten = [d.get("ghosts_eaten", math.nan) for d in data]
-times = [d.get("timestamp", math.nan) for d in data]
+avg_score_10  = [d.get("avg_score_10", d.get("avg_reward_10", math.nan)) for d in data]
+buffer_sizes  = [d.get("buffer_size", math.nan) for d in data]
+dots_manges   = [d.get("dots_manges", math.nan) for d in data]
+ghosts_eaten  = [d.get("ghosts_eaten", math.nan) for d in data]
+times         = [d.get("timestamp", math.nan) for d in data]
 
 fig, axes = plt.subplots(4, 2, figsize=(15, 16))
 axes = axes.ravel()
@@ -62,7 +69,7 @@ axes[6].set_xlabel("")
 
 axes[7].plot(episodes, ghosts_eaten, color="black")
 axes[7].set_title("Fantômes mangés")
-axes[7].set_xlabel("Ée")
+axes[7].set_xlabel("")
 
 for ax in axes:
     ax.grid(True, alpha=0.3)

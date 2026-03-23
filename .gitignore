@@ -1,5 +1,11 @@
-
+*.pth
 udes_conda_26/
 __pycache__/
 *.mp4
 anaconda3/
+log.json
+
+# Documentation générée par Doxygen
+docs/html/
+docs/latex/
+Doxyfile
