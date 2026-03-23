@@ -284,122 +284,125 @@ def train():
     start_time = time.time()
 
     print(f" Début | eps={episode_epsilon(episode+1):.3f} | device={DEVICE}")
+    try:
+        for episode_idx in range(episode, TOTAL_EPISODES):
+            if not running: break
 
-    for episode_idx in range(episode, TOTAL_EPISODES):
-        if not running: break
+            state, _ = env.reset()
+            ep_reward, ep_score, ep_steps = 0.0, 0.0, 0
+            dots_manges, ghosts_eaten = 0, 0
 
-        state, _ = env.reset()
-        ep_reward, ep_score, ep_steps = 0.0, 0.0, 0
-        dots_manges, ghosts_eaten = 0, 0
+            epsilon = episode_epsilon(episode_idx)
+            done = False
 
-        epsilon = episode_epsilon(episode_idx)
-        done = False
-
-        while not done and ep_steps < MAX_EPISODE_STEPS:
-            # Exploration ε-greedy
-            if np.random.rand() < epsilon:
-                action = env.action_space.sample()
-            else:
-                with torch.no_grad():
-                    state_t = torch.FloatTensor(state).unsqueeze(0).to(DEVICE) / 255.0
-                    action = policy_net(state_t).argmax(1).item()
-
-            next_state, reward, term, trunc, info = env.step(action)
-            done = term or trunc
-
-            raw_reward = float(info.get("raw_reward", reward))
-            if raw_reward > 0:  dots_manges  += 1
-            if raw_reward >= 200: ghosts_eaten += 1
-
-            replay_buffer.push(state, action, reward, next_state, done)
-
-            state, ep_reward, ep_score, ep_steps = (
-                next_state, ep_reward + reward, ep_score + raw_reward, ep_steps + 1
-            )
-            total_env_steps += 1
-
-        # --- APPRENTISSAGE (TRAIN_FREQ=4 : 1 update toutes les 4 actions) ---
-        if len(replay_buffer) >= current_learning_starts and total_env_steps % TRAIN_FREQ == 0:
-
-            # Sample PER (avec weights/idxs) ou uniforme (weights=1, idxs=None)
-            if USE_PER:
-                states, actions, rewards, nexts, dones, weights, idxs = \
-                    replay_buffer.sample(BATCH_SIZE, PER_BETA_START)
-            else:
-                states, actions, rewards, nexts, dones = replay_buffer.sample(BATCH_SIZE)
-                weights, idxs = np.ones(BATCH_SIZE), None
-
-            states_t = torch.FloatTensor(states).to(DEVICE) / 255.0
-            acts_t   = torch.LongTensor(actions).to(DEVICE).unsqueeze(1)
-            rews_t   = torch.FloatTensor(rewards).to(DEVICE)
-            nexts_t  = torch.FloatTensor(nexts).to(DEVICE) / 255.0
-            dones_t  = torch.FloatTensor(dones).to(DEVICE)
-            w_t      = torch.FloatTensor(weights).to(DEVICE)
-
-            q_curr = policy_net(states_t).gather(1, acts_t).squeeze(1)
-
-            with torch.no_grad():
-                # USE_DOUBLE_DQN : policy_net choisit, target_net évalue
-                # Classique       : target_net choisit ET évalue (biais +)
-                if USE_DOUBLE_DQN:
-                    next_act = policy_net(nexts_t).argmax(1, keepdim=True)
-                    next_q   = target_net(nexts_t).gather(1, next_act).squeeze(1)
+            while not done and ep_steps < MAX_EPISODE_STEPS:
+                # Exploration ε-greedy
+                if np.random.rand() < epsilon:
+                    action = env.action_space.sample()
                 else:
-                    next_q = target_net(nexts_t).max(1)[0]
-                target_q = rews_t + GAMMA * next_q * (1 - dones_t)
+                    with torch.no_grad():
+                        state_t = torch.FloatTensor(state).unsqueeze(0).to(DEVICE) / 255.0
+                        action = policy_net(state_t).argmax(1).item()
 
-            # Loss pondérée par IS weights (USE_PER) ou uniforme (sinon w=1)
-            td_err = nn.SmoothL1Loss(reduction='none')(q_curr, target_q)
-            loss   = (w_t * td_err).mean()
+                next_state, reward, term, trunc, info = env.step(action)
+                done = term or trunc
 
-            optimizer.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(policy_net.parameters(), 10.0)
-            optimizer.step()
+                raw_reward = float(info.get("raw_reward", reward))
+                if raw_reward > 0:  dots_manges  += 1
+                if raw_reward >= 200: ghosts_eaten += 1
 
-            # Mise à jour des priorités PER avec les nouvelles TD-errors
-            if USE_PER:
-                replay_buffer.update_priorities(idxs, td_err.detach().cpu().numpy())
+                replay_buffer.push(state, action, reward, next_state, done)
 
-            losses_list.append(loss.item())
+                state, ep_reward, ep_score, ep_steps = (
+                    next_state, ep_reward + reward, ep_score + raw_reward, ep_steps + 1
+                )
+                total_env_steps += 1
 
-        # Synchronisation target_net toutes les TARGET_UPDATE_EVERY actions
-        if total_env_steps % TARGET_UPDATE_EVERY == 0:
-            target_net.load_state_dict(policy_net.state_dict())
+            # --- APPRENTISSAGE (TRAIN_FREQ=4 : 1 update toutes les 4 actions) ---
+            if len(replay_buffer) >= current_learning_starts and total_env_steps % TRAIN_FREQ == 0:
 
-        # Métriques et logs épisode
-        recent_scores.append(ep_score)
-        if len(recent_scores) > 10: recent_scores.pop(0)
-        avg_score = np.mean(recent_scores)
-        mean_loss = np.mean(losses_list[-100:]) if losses_list else 0
+                # Sample PER (avec weights/idxs) ou uniforme (weights=1, idxs=None)
+                if USE_PER:
+                    states, actions, rewards, nexts, dones, weights, idxs = \
+                        replay_buffer.sample(BATCH_SIZE, PER_BETA_START)
+                else:
+                    states, actions, rewards, nexts, dones = replay_buffer.sample(BATCH_SIZE)
+                    weights, idxs = np.ones(BATCH_SIZE), None
 
-        log_data[f"ep_{episode_idx}"] = {
-            "eps": epsilon, "loss": mean_loss, "reward": ep_reward, "score": ep_score,
-            "dots": dots_manges, "ghosts": ghosts_eaten, "steps": ep_steps,
-            "avg10": avg_score, "buffer": len(replay_buffer)
-        }
+                states_t = torch.FloatTensor(states).to(DEVICE) / 255.0
+                acts_t   = torch.LongTensor(actions).to(DEVICE).unsqueeze(1)
+                rews_t   = torch.FloatTensor(rewards).to(DEVICE)
+                nexts_t  = torch.FloatTensor(nexts).to(DEVICE) / 255.0
+                dones_t  = torch.FloatTensor(dones).to(DEVICE)
+                w_t      = torch.FloatTensor(weights).to(DEVICE)
 
-        if dots_manges >= DOTS_LEVEL:
-            print(f"\033[ LEVEL CLEAR! ({dots_manges}/{DOTS_LEVEL})\033[0m")
+                q_curr = policy_net(states_t).gather(1, acts_t).squeeze(1)
 
-        print(f"Ep {episode_idx:4d} | score={ep_score:6.1f} | dots={dots_manges:3d} "
-              f"| ghosts={ghosts_eaten} | eps={epsilon:.3f} | loss={mean_loss:.3f}")
+                with torch.no_grad():
+                    # USE_DOUBLE_DQN : policy_net choisit, target_net évalue
+                    # Classique       : target_net choisit ET évalue (biais +)
+                    if USE_DOUBLE_DQN:
+                        next_act = policy_net(nexts_t).argmax(1, keepdim=True)
+                        next_q   = target_net(nexts_t).gather(1, next_act).squeeze(1)
+                    else:
+                        next_q = target_net(nexts_t).max(1)[0]
+                    target_q = rews_t + GAMMA * next_q * (1 - dones_t)
 
-        if ep_score > best_score:
-            best_score = ep_score
-            print(f" NEW BEST: {best_score:.0f}")
+                # Loss pondérée par IS weights (USE_PER) ou uniforme (sinon w=1)
+                td_err = nn.SmoothL1Loss(reduction='none')(q_curr, target_q)
+                loss   = (w_t * td_err).mean()
 
-        if episode_idx % SAVE_EVERY_EPISODES == 0:
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(policy_net.parameters(), 10.0)
+                optimizer.step()
+
+                # Mise à jour des priorités PER avec les nouvelles TD-errors
+                if USE_PER:
+                    replay_buffer.update_priorities(idxs, td_err.detach().cpu().numpy())
+
+                losses_list.append(loss.item())
+
+            # Synchronisation target_net toutes les TARGET_UPDATE_EVERY actions
+            if total_env_steps % TARGET_UPDATE_EVERY == 0:
+                target_net.load_state_dict(policy_net.state_dict())
+
+            # Métriques et logs épisode
+            recent_scores.append(ep_score)
+            if len(recent_scores) > 10: recent_scores.pop(0)
+            avg_score = np.mean(recent_scores)
+            mean_loss = np.mean(losses_list[-100:]) if losses_list else 0
+
+            log_data[f"ep_{episode_idx}"] = {
+                "eps": epsilon, "loss": mean_loss, "reward": ep_reward, "score": ep_score,
+                "dots": dots_manges, "ghosts": ghosts_eaten, "steps": ep_steps,
+                "avg10": avg_score, "buffer": len(replay_buffer)
+            }
+
             save_log(log_data)
-            save_checkpoint(policy_net, target_net, optimizer, episode_idx,
-                            best_score, total_env_steps, log_data)
-            print(f" Saved ep{episode_idx}")
 
-    save_checkpoint(policy_net, target_net, optimizer, episode_idx, best_score,
+            if dots_manges >= DOTS_LEVEL:
+                print(f"\033[ LEVEL CLEAR! ({dots_manges}/{DOTS_LEVEL})\033[0m")
+
+            print(f"Ep {episode_idx:4d} | score={ep_score:6.1f} | dots={dots_manges:3d} "
+                f"| ghosts={ghosts_eaten} | eps={epsilon:.3f} | loss={mean_loss:.3f}")
+
+            if ep_score > best_score:
+                best_score = ep_score
+                print(f" NEW BEST: {best_score:.0f}")
+
+            if episode_idx % SAVE_EVERY_EPISODES == 0:
+                save_log(log_data)
+                save_checkpoint(policy_net, target_net, optimizer, episode_idx,
+                                best_score, total_env_steps, log_data)
+                print(f" Saved ep{episode_idx}")
+    finally:
+        save_log(log_data)
+        save_checkpoint(policy_net, target_net, optimizer, episode_idx, best_score,
                     total_env_steps, log_data)
-    env.close()
-    print(" Training terminé")
-
+        env.close()
+        print(" Training terminé")
+        print(f" Saved ep{episode_idx}")
 
 if __name__ == "__main__":
     train()
