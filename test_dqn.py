@@ -1,88 +1,175 @@
 """
-@file      test_dqn.py
-@brief     Lance une partie MsPacman avec l'agent entraîné (epsilon=0).
-@details   Charge le checkpoint mspacman_dqn.pth et joue une partie complète
-           en mode déterministe (greedy pur) avec rendu visuel "human".
-           Affiche score, dots mangés et fantômes mangés en fin de partie.
+test.py — Évaluation d'un agent DQN entraîné sur MsPacman-ALE.
+Lance une partie complète en mode greedy (ε-greedy configurable)
+et affiche les statistiques de la partie.
+
+Usage :
+    python test.py                              # greedy, sans rendu
+    python test.py --render                     # avec fenêtre de jeu
+    python test.py --epsilon 0.0                # 100 % greedy
+    python test.py --checkpoint path/to/my.pth  # checkpoint custom
 """
 
-import time
-import torch
-import numpy as np
+import argparse
 from pathlib import Path
 
-from wrappers import make_train_env
+import numpy as np
+import torch
+
+from wrappers import make_test_env
 from dqn_model import DQN
 
-## @brief Nombre de gommes pour détecter un niveau terminé.
-DOTS_LEVEL = 158
+# ── Constantes ────────────────────────────────────────────────────────────────
+BASE_DIR   = Path(__file__).resolve().parent
+CKPT_PATH  = BASE_DIR / "checkpoints" / "mspacman_dqn.pth"
+DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DOTS_LEVEL = 158      # gommes nécessaires pour valider un tableau
+MAX_STEPS  = 27_000   # garde-fou anti-boucle infinie
 
-DEVICE    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-CKPT_PATH = Path(__file__).resolve().parent / "checkpoints" / "mspacman_dqn.pth"
+
+# ── Argument parser ───────────────────────────────────────────────────────────
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Test d'un agent DQN MsPacman",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--checkpoint", type=str, default=str(CKPT_PATH),
+        help="Chemin vers le fichier .pth",
+    )
+    parser.add_argument(
+        "--render", action="store_true",
+        help="Affiche la fenêtre de jeu en temps réel",
+    )
+    parser.add_argument(
+        "--epsilon", type=float, default=0.05,
+        help="Epsilon pour la politique ε-greedy lors du test",
+    )
+    return parser.parse_args()
 
 
-def play():
+# ── Chargement robuste des poids ──────────────────────────────────────────────
+def load_weights(policy_net: DQN, checkpoint: dict) -> None:
+    """Charge les poids depuis le checkpoint.
+    Supporte le nouveau format (conv/fc) et l'ancien (net./head.).
     """
-    @brief  Joue une partie complète avec le modèle entraîné.
-    @details Epsilon = 0 : l'agent choisit toujours argmax Q(s,a), aucune
-             exploration aléatoire. clip_rewards=False pour voir le vrai score Atari.
-             Imprime le résultat final et détecte si le niveau est terminé.
+    raw_sd = checkpoint.get("policy_net", checkpoint.get("net", checkpoint))
+
+    if not (isinstance(raw_sd, dict) and raw_sd and
+            isinstance(next(iter(raw_sd.values())), torch.Tensor)):
+        print("[AVERTISSEMENT] Format de checkpoint non reconnu — poids aléatoires.")
+        return
+
+    try:
+        policy_net.load_state_dict(raw_sd)
+    except RuntimeError:
+        new_sd = {}
+        for k, v in raw_sd.items():
+            nk = (k.replace("net.", "conv.")
+                   .replace("head.", "fc.")
+                   .replace("head.0", "fc.0")
+                   .replace("head.2", "fc.2"))
+            new_sd[nk] = v
+        policy_net.load_state_dict(new_sd, strict=False)
+        print("[INFO] Poids convertis depuis l'ancien format (net./head.).")
+
+
+# ── Boucle de jeu ─────────────────────────────────────────────────────────────
+def run_episode(policy_net: DQN, env, epsilon: float) -> tuple[float, int, int, int]:
+    """Joue une partie complète.
+    Returns: total_reward, step, dots_manges, ghosts_eaten
     """
-    # render_mode="human" pour voir le jeu, clip_rewards=False pour le vrai score Atari
-    env = make_train_env(render_mode="human", clip_rewards=False)
-
-    n_actions = env.action_space.n
-    obs_shape = env.observation_space.shape
-    model = DQN(obs_shape, n_actions).to(DEVICE)
-
-    # Chargement des poids de l'entraînement
-    if CKPT_PATH.exists():
-        checkpoint = torch.load(CKPT_PATH, map_location=DEVICE)
-        model.load_state_dict(checkpoint["policy_net"])
-        print(f" Modèle chargé depuis {CKPT_PATH}")
-    else:
-        print("Aucun fichier d'entraînement trouvé, Jeu aléatoire")
-
-    model.eval()
     state, _ = env.reset()
-
     total_reward = 0.0
+    step         = 0
     dots_manges  = 0
     ghosts_eaten = 0
     done         = False
 
-    print("Début de la partie (Epsilon = 0.0)...")
+    while not done and step < MAX_STEPS:
+        if np.random.rand() < epsilon:
+            action = env.action_space.sample()
+        else:
+            with torch.no_grad():
+                state_t = (
+                    torch.FloatTensor(state)
+                    .unsqueeze(0)
+                    .to(DEVICE) / 255.0
+                )
+                action = policy_net(state_t).argmax(1).item()
 
-    while not done:
-        # Sélection de l'action de manière 100% déterministe (Epsilon = 0)
-        with torch.no_grad():
-            state_t = torch.from_numpy(np.array(state)).unsqueeze(0).to(DEVICE)
-            q_values = model(state_t)
-            action = int(q_values.argmax(dim=1).item())
-
-        next_state, reward, terminated, truncated, _ = env.step(action)
+        next_state, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
 
-        # Incrémentation des dots et des fantômes
-        if reward > 0:    dots_manges  += 1
-        if reward >= 200: ghosts_eaten += 1
+        raw_reward = float(info.get("rawreward", reward))
 
-        state = next_state
-        total_reward += reward
+        if raw_reward > 0:
+            dots_manges += 1
+        if raw_reward >= 200:
+            ghosts_eaten += 1
 
-        # Ralentir un peu le rendu pour que ce soit visible à l'oeil nu
-        time.sleep(0.00)
+        total_reward += raw_reward
+        step         += 1
+        state         = next_state
+
+    return total_reward, step, dots_manges, ghosts_eaten
+
+
+# ── Point d'entrée ────────────────────────────────────────────────────────────
+def main() -> None:
+    args      = parse_args()
+    ckpt_path = Path(args.checkpoint)
+
+    if not ckpt_path.exists():
+        print(f"[ERREUR] Checkpoint introuvable : {ckpt_path}")
+        return
+
+    print(f"\nChargement du checkpoint : {ckpt_path}")
+    checkpoint = torch.load(ckpt_path, map_location=DEVICE)
+    config     = checkpoint.get("config", {})
+    dueling    = config.get("dueling", False)
+
+    print("\n--- CHECKPOINT ---")
+    print(
+        f"Config checkpoint : dueling={dueling} "
+        f"| double={config.get('double_dqn', '?')} "
+        f"| per={config.get('per', '?')} "
+        f"| trophy={config.get('trophy_buffer', '?')}"
+    )
+    print(f"Meilleur score entraînement : {checkpoint.get('best_score', 0):.0f}")
+    print(f"Épisodes entraînés          : {checkpoint.get('episode', '?')}")
+    print(f"Trophy baseline             : {checkpoint.get('trophy_baseline', 'N/A')}")
+
+    render_mode = "human"
+    env         = make_test_env(render_mode=render_mode)
+    obs_shape   = env.observation_space.shape
+    n_actions   = env.action_space.n
+
+    policy_net = DQN(obs_shape, n_actions, dueling=dueling).to(DEVICE)
+    load_weights(policy_net, checkpoint)
+    policy_net.eval()
+
+    print(f"\nDispositif : {DEVICE}  |  Architecture : {'Dueling DQN' if dueling else 'DQN classique'}")
+    print(f"ε test     : {args.epsilon}  |  Steps max : {MAX_STEPS:,}")
+
+    print("\nDébut de la partie…")
+    total_reward, step, dots_manges, ghosts_eaten = run_episode(
+        policy_net, env, args.epsilon
+    )
 
     print("\n--- RÉSULTATS DE LA PARTIE ---")
-    print(f"Score final      : {total_reward}")
-    print(f"Points mangés    : {dots_manges}")
-    print(f"Fantômes mangés  : {ghosts_eaten}")
+    print(f"Score final     : {total_reward:.0f}")
+    print(f"Steps joués     : {step}")
+    print(f"Dots mangés     : {dots_manges}")
+    print(f"Fantômes mangés : {ghosts_eaten}")
 
     if dots_manges >= DOTS_LEVEL:
-        print("\033[92m[FINISH] L'agent a terminé un tableau !\033[0m")
+        print("\033[92m★ [FINISH] L'agent a terminé un tableau !\033[0m")
+    elif ghosts_eaten > 0:
+        print(f"\033[96m{ghosts_eaten} fantôme(s) mangé(s) !\033[0m")
 
     env.close()
 
 
 if __name__ == "__main__":
-    play()
+    main()
