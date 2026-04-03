@@ -4,10 +4,7 @@ Lance une partie complète en mode greedy (ε-greedy configurable)
 et affiche les statistiques de la partie.
 
 Usage :
-    python test.py                              # greedy, sans rendu
-    python test.py --render                     # avec fenêtre de jeu
-    python test.py --epsilon 0.0                # 100 % greedy
-    python test.py --checkpoint path/to/my.pth  # checkpoint custom
+    make test
 """
 
 import argparse
@@ -42,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         help="Affiche la fenêtre de jeu en temps réel",
     )
     parser.add_argument(
-        "--epsilon", type=float, default=0.05,
+        "--epsilon", type=float, default=0,
         help="Epsilon pour la politique ε-greedy lors du test",
     )
     return parser.parse_args()

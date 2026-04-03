@@ -26,14 +26,14 @@ data = [log[k] for k in episode_keys]
 
 # Extraction des métriques (math.nan si clé absente pour compatibilité)
 episodes      = [int(k.split("_")[1]) for k in episode_keys]
-epsilons      = [d.get("epsilon", math.nan) for d in data]
+epsilons      = [d.get("eps", math.nan) for d in data]
 losses        = [d["loss"] if d.get("loss") is not None else math.nan for d in data]
 scores        = [d.get("score", d.get("episode_reward", math.nan)) for d in data]
-episode_steps = [d.get("episode_steps", d.get("episode_length", math.nan)) for d in data]
-avg_score_10  = [d.get("avg_score_10", d.get("avg_reward_10", math.nan)) for d in data]
-buffer_sizes  = [d.get("buffer_size", math.nan) for d in data]
-dots_manges   = [d.get("dots_manges", math.nan) for d in data]
-ghosts_eaten  = [d.get("ghosts_eaten", math.nan) for d in data]
+episode_steps = [d.get("steps", d.get("episode_length", math.nan)) for d in data]
+avg_score_10  = [d.get("avg10", d.get("avg_reward_10", math.nan)) for d in data]
+buffer_sizes  = [d.get("buffer", math.nan) for d in data]
+dots_manges   = [d.get("dots", math.nan) for d in data]
+ghosts_eaten  = [d.get("ghosts", math.nan) for d in data]
 times         = [d.get("timestamp", math.nan) for d in data]
 
 fig, axes = plt.subplots(4, 2, figsize=(15, 16))

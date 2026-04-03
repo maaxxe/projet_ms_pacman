@@ -34,7 +34,7 @@ def load_level_bonus():
         with open(REWARDS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     else:
-        return {"level_clear_bonus": 50.0, "dots_level": 158}
+        return {"level_clear_bonus": 50.0, "dots_level": 158, "pastille_normale": 10,"pastille_grosse": 50 }
 
 
 class LevelClearBonusEnv(gym.Wrapper):
@@ -268,17 +268,18 @@ def make_train_env(render_mode=None, clip_rewards=True):
     """
     @brief  Construit l'environnement complet pour l'entraînement.
     @param  render_mode   Mode rendu (None = headless).
-    @param  clip_rewards  Si True, clippe rewards à {-1,0,+1}.
+    @param  clip_rewards  Si True, clippe rewards à {-1,0,+1} .
     @return env Gymnasium prêt pour DQN.
     """
     env = _make_base_env(render_mode=render_mode)
     env = FireResetEnv(env)
     env = MaxAndSkipEnv(env, skip=4)
-    env = LevelClearBonusEnv(env)   # Bonus fin de niveau
+    if clip_rewards:
+        env = ClipRewardEnv(env)       
+    env = LevelClearBonusEnv(env) 
     env = ProcessFrame84(env)
     env = FrameStack(env, k=4)
-    if clip_rewards:
-        env = ClipRewardEnv(env)
+   
     return env
 
 

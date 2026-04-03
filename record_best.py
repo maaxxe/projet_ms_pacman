@@ -1,100 +1,150 @@
 """
 @file      record_best.py
 @brief     Enregistre en vidéo MP4 les meilleures parties de l'agent.
-@details   Lance num_episodes parties et sauvegarde uniquement celles où
-           dots_manges >= min_dots (critère de victoire configurable).
+@details   Lance N épisodes et sauvegarde uniquement ceux où dots_manges >= DOTS_LEVEL.
            Utilise render_mode="rgb_array" pour capturer sans fenêtre.
            Vidéos sauvegardées dans ./videos/pacman_win_Xdots_epY.mp4
 """
 
-import time
-import torch
-import numpy as np
-import imageio
+import argparse
 from pathlib import Path
 
-from wrappers import make_train_env
+import imageio.v2 as imageio
+import numpy as np
+import torch
+
+from wrappers import make_test_env
 from dqn_model import DQN
 
-DEVICE    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-CKPT_PATH = Path(__file__).resolve().parent / "checkpoints" / "mspacman_dqn.pth"
-VIDEO_DIR = Path(__file__).resolve().parent / "videos"
-
+BASE_DIR = Path(__file__).resolve().parent
+CKPT_PATH = BASE_DIR / "checkpoints" / "mspacman_dqn.pth"
+VIDEO_DIR = BASE_DIR / "videos"
 VIDEO_DIR.mkdir(exist_ok=True)
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DOTS_LEVEL = 158
 
-def record_best_runs(num_episodes, min_dots):
-    """
-    @brief  Joue num_episodes parties et enregistre celles >= min_dots.
-    @param  num_episodes  Nombre de parties à tenter.
-    @param  min_dots      Seuil minimum de gommes pour sauvegarder la vidéo.
-    @details L'agent joue en greedy pur (epsilon=0). Toutes les frames sont
-             capturées en mémoire via render_mode="rgb_array". La vidéo n'est
-             écrite sur disque QUE si le seuil min_dots est atteint, pour ne
-             pas remplir le disque avec des parties ratées.
-    """
-    nb = 0
-    # render_mode="rgb_array" capture les images sans ouvrir de fenêtre
-    env = make_train_env(render_mode="rgb_array", clip_rewards=False)
+NUM_EPISODES = 100
+EPSILON      = 0.0
+FPS          = 30
+MAX_STEPS    = 27_000
 
-    n_actions = env.action_space.n
-    obs_shape = env.observation_space.shape
-    model = DQN(obs_shape, n_actions).to(DEVICE)
 
-    if CKPT_PATH.exists():
-        checkpoint = torch.load(CKPT_PATH, map_location=DEVICE)
-        model.load_state_dict(checkpoint["policy_net"])
-        print(f" Modèle chargé !")
-        print(f"min_dots recherche = {min_dots}")
+
+
+def load_model(ckpt_path, obs_shape, n_actions):
+    dueling = True
+    checkpoint = None
+
+    if Path(ckpt_path).exists():
+        checkpoint = torch.load(ckpt_path, map_location=DEVICE)
+        config = checkpoint.get("config", {})
+        dueling = config.get("dueling", True)
+        print(f"Checkpoint : {Path(ckpt_path).name}")
+        print(f"Dueling    : {dueling}")
+        print(f"Best score : {checkpoint.get('best_score', 0):.0f}")
+        print(f"Trophy BL  : {checkpoint.get('trophy_baseline', 'N/A')}")
     else:
-        print(" Aucun modèle trouvé.")
+        print(f"[ERREUR] Checkpoint introuvable : {ckpt_path}")
+        return None
+
+    model = DQN(obs_shape, n_actions, dueling=dueling).to(DEVICE)
+    model.load_state_dict(checkpoint["policy_net"])
+    model.eval()
+    return model
+
+
+def select_action(model, state, epsilon):
+    if epsilon > 0 and np.random.rand() < epsilon:
+        return None
+
+    with torch.no_grad():
+        state_t = torch.FloatTensor(state).unsqueeze(0).to(DEVICE) / 255.0
+        return int(model(state_t).argmax(1).item())
+
+
+def run_episode(env, model, epsilon=0.0, max_steps=MAX_STEPS):
+    state, _ = env.reset()
+    frames = []
+    total_reward = 0.0
+    dots_manges = 0
+    ghosts_eaten = 0
+    steps = 0
+    done = False
+
+    first_frame = env.render()
+    if first_frame is not None:
+        frames.append(np.array(first_frame).copy())
+
+    while not done and steps < max_steps:
+        action = select_action(model, state, epsilon)
+        if action is None:
+            action = env.action_space.sample()
+
+        next_state, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
+
+        frame = env.render()
+        if frame is not None:
+            frames.append(np.array(frame).copy())
+
+        raw_reward = float(info.get("raw_reward", reward))
+        if 0 < raw_reward <= 50:
+            dots_manges += 1
+        if raw_reward >= 200:
+            ghosts_eaten += 1
+
+        total_reward += raw_reward
+        state = next_state
+        steps += 1
+
+    return {
+        "frames": frames,
+        "score": total_reward,
+        "dots": dots_manges,
+        "ghosts": ghosts_eaten,
+        "steps": steps,
+        "level_clear": dots_manges >= DOTS_LEVEL,
+    }
+
+
+def main():
+    MAX_IN_RUN = 0
+
+    env = make_test_env(render_mode="rgb_array")
+    model = load_model(CKPT_PATH, env.observation_space.shape, env.action_space.n)
+    if model is None:
+        env.close()
         return
 
-    model.eval()
+    saved = 0
+    print(f"\nEpisodes : {NUM_EPISODES} | DOTS_LEVEL : {DOTS_LEVEL} | epsilon : {EPSILON}")
+    print("-" * 60)
 
-    for ep in range(1, num_episodes + 1):
-        state, _ = env.reset()
-        done = False
-        dots_manges = 0
-        frames = []  # Buffer en mémoire pour les frames de la partie
+    try:
+        for ep in range(1, NUM_EPISODES + 1):
+            out = run_episode(env, model, epsilon=EPSILON)
+            if (out['dots']>= MAX_IN_RUN ):
+                MAX_IN_RUN = out['dots']
+            print(
+                f"Ep {ep:3d}/{NUM_EPISODES} | score={out['score']:7.0f} | "
+                f"dots={out['dots']:3d} | ghosts={out['ghosts']} | steps={out['steps']:5d}"
+            )
 
-        print(f"Lancement de la partie {ep}/{num_episodes}...")
+            if out["dots"] >= DOTS_LEVEL:
+                saved += 1
+                video_name = f"pacman_win_{out['dots']}dots_ep{ep}.mp4"
+                video_path = VIDEO_DIR / video_name
+                imageio.mimsave(str(video_path), out["frames"], fps=FPS)
+                print(f"  -> saved {video_name}")
+            else:
+                print("  -> skipped")
+    finally:
+        env.close()
 
-        while not done:
-            # 1. Capture l'écran actuel et l'ajoute à la vidéo
-            frames.append(env.render())
-
-            # 2. L'IA joue (Epsilon = 0)
-            with torch.no_grad():
-                state_t = torch.from_numpy(np.array(state)).unsqueeze(0).to(DEVICE)
-                q_values = model(state_t)
-                action = int(q_values.argmax(dim=1).item())
-
-            next_state, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-
-            if reward > 0: dots_manges += 1
-
-            state = next_state
-
-        print(f"Partie {ep} terminée : {dots_manges} dots mangés.")
-
-        # 3. Sauvegarde vidéo UNIQUEMENT si seuil atteint
-        if dots_manges >= min_dots:
-            nb += 1
-            video_name = f"pacman_win_{dots_manges}dots_ep{ep}.mp4"
-            video_path = VIDEO_DIR / video_name
-            print(f"\033[ LEVEL CLEAR! Enregistrement de {video_name} \033[0m")
-            # FPS=30 ou 60 selon la vitesse à laquelle tu veux regarder la vidéo
-            imageio.mimsave(str(video_path), frames, fps=60)
-            print(" Vidéo sauvegardée !")
-        else:
-            print(" Score insuffisant, vidéo effacée de la mémoire.")
-
-    env.close()
-    print("Terminé ! Vérifiez le dossier 'videos'.")
-    print(f"Il y a {nb} enregistrements")
+    print(f"Terminé. Vidéos sauvegardées: {saved}")
+    print(f"Max_enregistré : {MAX_IN_RUN}")
 
 
 if __name__ == "__main__":
-    record_best_runs(num_episodes=50, min_dots=159)
+    main()

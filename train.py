@@ -296,7 +296,7 @@ def _trophy_active():
 
 
 def train():
-    """
+    """ 
     @brief  Boucle principale d'entraînement DQN MsPacman.
     @details Flux :
              1. Création env + réseaux (Dueling si USE_DUELING_DQN).
