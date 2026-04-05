@@ -33,6 +33,13 @@ MAX_STEPS    = 27_000
 
 
 def load_model(ckpt_path, obs_shape, n_actions):
+    """
+    @brief  Charge le modèle DQN depuis un fichier checkpoint.
+    @param  ckpt_path   Chemin vers le fichier .pth.
+    @param  obs_shape   Forme de l'espace d'observation (C, H, W).
+    @param  n_actions   Nombre d'actions disponibles.
+    @return Instance DQN avec poids chargés, ou None si checkpoint introuvable.
+    """
     dueling = True
     checkpoint = None
 
@@ -55,6 +62,13 @@ def load_model(ckpt_path, obs_shape, n_actions):
 
 
 def select_action(model, state, epsilon):
+    """
+    @brief  Sélectionne une action epsilon-greedy.
+    @param  model    Réseau DQN.
+    @param  state    Observation courante.
+    @param  epsilon  Taux d'exploration (0 = greedy pur).
+    @return Indice de l'action choisie (int), ou None en mode aléatoire.
+    """
     if epsilon > 0 and np.random.rand() < epsilon:
         return None
 
@@ -64,6 +78,14 @@ def select_action(model, state, epsilon):
 
 
 def run_episode(env, model, epsilon=0.0, max_steps=MAX_STEPS):
+    """
+    @brief  Joue un épisode complet et capture les frames pour la vidéo.
+    @param  env        Environnement Gymnasium (make_test_env en rgb_array).
+    @param  model      Réseau DQN pour choisir les actions.
+    @param  epsilon    Taux d'exploration aléatoire (défaut 0.0 = greedy).
+    @param  max_steps  Nombre maximum de steps par épisode.
+    @return Dict avec frames, score, dots, ghosts, steps, level_clear.
+    """
     state, _ = env.reset()
     frames = []
     total_reward = 0.0
@@ -109,6 +131,12 @@ def run_episode(env, model, epsilon=0.0, max_steps=MAX_STEPS):
 
 
 def main():
+    """
+    @brief  Point d'entrée principal de record_best.py.
+    @details Lance NUM_EPISODES épisodes et sauvegarde en MP4 ceux
+             où l'agent mange au moins DOTS_LEVEL gommes.
+             Les vidéos sont sauvegardées dans ./videos/.
+    """
     MAX_IN_RUN = 0
 
     env = make_test_env(render_mode="rgb_array")

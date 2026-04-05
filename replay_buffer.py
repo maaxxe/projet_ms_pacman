@@ -13,17 +13,44 @@ import random
 import numpy as np
 from collections import deque
 
+## @brief Epsilon ajouté à toute TD-error pour éviter une priorité nulle.
 PER_EPS = 1e-6
 
+
 class ReplayBuffer:
+    """
+    @class   ReplayBuffer
+    @brief   Buffer de replay uniforme (sampling aléatoire sans priorité).
+    @details Utilise un deque circulaire de capacité fixe.
+             Utilisé quand USE_PER=False dans train.py.
+    """
+
     def __init__(self, capacity):
+        """
+        @brief  Initialise le buffer avec une capacité fixe.
+        @param  capacity  Nombre maximum de transitions stockables.
+        """
         self.capacity = capacity
         self.buffer = deque(maxlen=capacity)
 
     def push(self, state, action, reward, next_state, done, episode_id=None):
+        """
+        @brief  Ajoute une transition dans le buffer.
+        @param  state       Observation courante.
+        @param  action      Action exécutée.
+        @param  reward      Récompense reçue.
+        @param  next_state  Observation suivante.
+        @param  done        Booléen fin d'épisode.
+        @param  episode_id  Ignoré ici, présent pour interface commune avec PER.
+        """
         self.buffer.append((state, action, reward, next_state, done))
 
     def sample(self, batch_size):
+        """
+        @brief  Échantillonne un mini-batch aléatoire uniforme.
+        @param  batch_size  Nombre de transitions à retourner.
+        @return Tuple (states, actions, rewards, next_states, dones) en numpy.
+        """
         batch = random.sample(self.buffer, batch_size)
         s, a, r, ns, d = zip(*batch)
         return (
@@ -35,6 +62,10 @@ class ReplayBuffer:
         )
 
     def state_dict(self):
+        """
+        @brief  Retourne l'état du buffer sous forme de dict sérialisable.
+        @return Dict avec type, capacité et contenu du buffer.
+        """
         return {
             'type': 'uniform',
             'capacity': self.capacity,
@@ -42,14 +73,34 @@ class ReplayBuffer:
         }
 
     def load_state_dict(self, state):
+        """
+        @brief  Restaure le buffer depuis un dict de sauvegarde.
+        @param  state  Dict précédemment retourné par state_dict().
+        """
         self.capacity = int(state.get('capacity', self.capacity))
         self.buffer = deque(state.get('buffer', []), maxlen=self.capacity)
 
     def __len__(self):
+        """@brief Retourne le nombre de transitions actuellement dans le buffer."""
         return len(self.buffer)
 
+
 class PrioritizedReplayBuffer:
+    """
+    @class   PrioritizedReplayBuffer
+    @brief   Buffer de replay avec échantillonnage priorisé (PER).
+    @details Chaque transition reçoit une priorité p_i = (|TD-error| + PER_EPS)^alpha.
+             Le sampling est proportionnel à p_i. Supporte le Trophy Buffer
+             via le champ episode_id pour un boost rétroactif des priorités.
+             Utilisé quand USE_PER=True dans train.py.
+    """
+
     def __init__(self, capacity, alpha=0.6):
+        """
+        @brief  Initialise le buffer PER.
+        @param  capacity  Nombre maximum de transitions stockables.
+        @param  alpha     Exposant de priorité (0=uniforme, 1=greedy). Défaut 0.6.
+        """
         self.alpha = alpha
         self.capacity = capacity
         self.buffer = []
@@ -60,9 +111,19 @@ class PrioritizedReplayBuffer:
         self.size = 0
 
     def push(self, state, action, reward, next_state, done, td_error=1.0, episode_id=-1):
+        """
+        @brief  Ajoute une transition dans le buffer PER.
+        @param  state       Observation courante.
+        @param  action      Action exécutée.
+        @param  reward      Récompense reçue.
+        @param  next_state  Observation suivante.
+        @param  done        Booléen fin d'épisode.
+        @param  td_error    TD-error initiale pour calculer la priorité (défaut 1.0 = max).
+        @param  episode_id  Identifiant d'épisode pour le Trophy Buffer.
+        """
         prio = (td_error + PER_EPS) ** self.alpha
         transition = (state, action, reward, next_state, done)
-        
+
         if self.size < self.capacity:
             if len(self.buffer) < self.capacity:
                 self.buffer.append(transition)
@@ -71,13 +132,19 @@ class PrioritizedReplayBuffer:
             self.size += 1
         else:
             self.buffer[self.pos] = transition
-            
+
         self.priorities[self.pos] = prio
         self.episode_ids[self.pos] = episode_id if episode_id is not None else -1
-        
+
         self.pos = (self.pos + 1) % self.capacity
 
     def sample(self, batch_size, beta=0.4):
+        """
+        @brief  Échantillonne un mini-batch pondéré par les priorités.
+        @param  batch_size  Nombre de transitions à retourner.
+        @param  beta        Exposant IS-weight pour corriger le biais (0.4 à 1.0).
+        @return Tuple (states, actions, rewards, next_states, dones, weights, idxs).
+        """
         N = len(self)
         if N == 0:
             raise ValueError('Cannot sample from an empty buffer')
@@ -98,6 +165,11 @@ class PrioritizedReplayBuffer:
         return s, a, r, ns, d, w.astype(np.float32), idxs
 
     def update_priorities(self, idxs, td_errors):
+        """
+        @brief  Met à jour les priorités après un pas d'apprentissage.
+        @param  idxs      Indices des transitions échantillonnées.
+        @param  td_errors Nouvelles TD-errors (np.array) pour recalculer les priorités.
+        """
         prios = (np.abs(td_errors) + PER_EPS) ** self.alpha
         for i, idx in enumerate(idxs):
             self.priorities[idx] = prios[i]
@@ -105,29 +177,39 @@ class PrioritizedReplayBuffer:
     def boost_episode_priorities(self, episode_id, total_return, baseline, lambda_boost=0.5, scale=100.0):
         """
         @brief  Multiplie la priorité de toutes les transitions appartenant à episode_id.
+        @param  episode_id    Identifiant de l'épisode à booster.
+        @param  total_return  Return total G_t de l'épisode.
+        @param  baseline      Baseline EMA courante pour comparer G_t.
+        @param  lambda_boost  Intensité du boost (défaut 0.5).
+        @param  scale         Échelle de normalisation du sigmoid (défaut 100.0).
+        @return Tuple (n_boosted, boost_factor) ou None si épisode ignoré.
         @details boost = 1 + lambda_boost * sigmoid((total_return - baseline) / scale)
                  Ne s'applique qu'aux épisodes dont G_t > baseline.
         """
         if episode_id == -1 or total_return <= baseline:
             return None
-            
+
         # Trouver les indices dans le buffer qui correspondent à cet épisode
         valid_idxs = np.where(self.episode_ids[:self.size] == episode_id)[0]
         if len(valid_idxs) == 0:
             return None
-            
+
         # Calcul du boost sigmoid
         x = (total_return - baseline) / scale
-        x = max(min(x, 10.0), -10.0) # Eviter l'overflow
+        x = max(min(x, 10.0), -10.0)  # Eviter l'overflow
         sigmoid = 1.0 / (1.0 + np.exp(-x))
         boost_factor = 1.0 + lambda_boost * sigmoid
-        
+
         # Appliquer le multiplicateur
         self.priorities[valid_idxs] *= boost_factor
-        
+
         return len(valid_idxs), boost_factor
 
     def state_dict(self):
+        """
+        @brief  Retourne l'état complet du buffer PER sous forme de dict sérialisable.
+        @return Dict avec type, capacité, alpha, buffer, priorités, episode_ids, pos, size.
+        """
         return {
             'type': 'per',
             'capacity': self.capacity,
@@ -140,26 +222,31 @@ class PrioritizedReplayBuffer:
         }
 
     def load_state_dict(self, state):
+        """
+        @brief  Restaure le buffer PER depuis un dict de sauvegarde.
+        @param  state  Dict précédemment retourné par state_dict().
+        """
         self.capacity = int(state.get('capacity', self.capacity))
         self.alpha = float(state.get('alpha', self.alpha))
         self.buffer = list(state.get('buffer', []))
         self.size = int(state.get('size', len(self.buffer)))
         self.buffer = self.buffer[:self.size]
-        
+
         self.priorities = np.zeros(self.capacity, dtype=np.float32)
         saved_prios = np.array(state.get('priorities', []), dtype=np.float32)
         n = min(len(saved_prios), self.size, self.capacity)
         if n > 0:
             self.priorities[:n] = saved_prios[:n]
-            
+
         self.episode_ids = np.full(self.capacity, -1, dtype=np.int64)
         if 'episode_ids' in state:
             saved_ids = np.array(state['episode_ids'], dtype=np.int64)
             n_ids = min(len(saved_ids), self.size, self.capacity)
             if n_ids > 0:
                 self.episode_ids[:n_ids] = saved_ids[:n_ids]
-                
+
         self.pos = int(state.get('pos', self.size % max(1, self.capacity))) % max(1, self.capacity)
 
     def __len__(self):
+        """@brief Retourne le nombre de transitions actuellement dans le buffer PER."""
         return self.size

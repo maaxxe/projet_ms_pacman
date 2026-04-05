@@ -227,7 +227,7 @@ list-backups:
 .PHONY: install
 install:
 	@echo "$(GREEN)[INSTALL] Installation des dependances...$(RESET)"
-	pip install torch torchvision numpy gymnasium ale-py matplotlib imageio
+	pip install torch torchvision numpy gymnasium ale-py matplotlib imageio Pillow
 	@echo "$(GREEN)[INSTALL] Dependances installees$(RESET)"
 
 ##

@@ -1,10 +1,13 @@
 """
-test.py — Évaluation d'un agent DQN entraîné sur MsPacman-ALE.
-Lance une partie complète en mode greedy (ε-greedy configurable)
-et affiche les statistiques de la partie.
+@file      test_dqn.py
+@brief     Évaluation d'un agent DQN entraîné sur MsPacman-ALE.
+@details   Lance une partie complète en mode greedy (ε-greedy configurable)
+           et affiche les statistiques de la partie (score, dots, fantomes).
+           Le modèle est chargé depuis le checkpoint checkpoints/mspacman_dqn.pth.
 
 Usage :
     make test
+    python test_dqn.py --epsilon 0.05 --render
 """
 
 import argparse
@@ -26,6 +29,10 @@ MAX_STEPS  = 27_000   # garde-fou anti-boucle infinie
 
 # ── Argument parser ───────────────────────────────────────────────────────────
 def parse_args() -> argparse.Namespace:
+    """
+    @brief  Parse les arguments de la ligne de commande.
+    @return Namespace avec les champs : checkpoint, render, epsilon.
+    """
     parser = argparse.ArgumentParser(
         description="Test d'un agent DQN MsPacman",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -47,8 +54,12 @@ def parse_args() -> argparse.Namespace:
 
 # ── Chargement robuste des poids ──────────────────────────────────────────────
 def load_weights(policy_net: DQN, checkpoint: dict) -> None:
-    """Charge les poids depuis le checkpoint.
-    Supporte le nouveau format (conv/fc) et l'ancien (net./head.).
+    """
+    @brief  Charge les poids depuis le checkpoint dans policy_net.
+    @param  policy_net  Réseau DQN à initialiser.
+    @param  checkpoint  Dict chargé depuis torch.load().
+    @details Supporte le nouveau format (conv/fc) et l'ancien (net./head.).
+             Affiche un avertissement si le format est non reconnu.
     """
     raw_sd = checkpoint.get("policy_net", checkpoint.get("net", checkpoint))
 
@@ -73,8 +84,12 @@ def load_weights(policy_net: DQN, checkpoint: dict) -> None:
 
 # ── Boucle de jeu ─────────────────────────────────────────────────────────────
 def run_episode(policy_net: DQN, env, epsilon: float) -> tuple[float, int, int, int]:
-    """Joue une partie complète.
-    Returns: total_reward, step, dots_manges, ghosts_eaten
+    """
+    @brief  Joue une partie complète avec la politique epsilon-greedy.
+    @param  policy_net  Réseau DQN utilisé pour choisir les actions.
+    @param  env         Environnement Gymnasium (make_test_env).
+    @param  epsilon     Taux d'exploration aléatoire.
+    @return Tuple (total_reward, steps, dots_manges, ghosts_eaten).
     """
     state, _ = env.reset()
     total_reward = 0.0
@@ -114,6 +129,11 @@ def run_episode(policy_net: DQN, env, epsilon: float) -> tuple[float, int, int, 
 
 # ── Point d'entrée ────────────────────────────────────────────────────────────
 def main() -> None:
+    """
+    @brief  Point d'entrée principal du script test_dqn.py.
+    @details Charge le checkpoint, crée l'environnement de test,
+             joue un épisode et affiche les résultats (score, dots, fantomes).
+    """
     args      = parse_args()
     ckpt_path = Path(args.checkpoint)
 

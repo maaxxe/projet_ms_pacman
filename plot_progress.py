@@ -20,11 +20,9 @@ with open(LOG_PATH, "r", encoding="utf-8") as f:
 if not log:
     raise ValueError("log.json est vide.")
 
-# Tri correct des épisodes : episode_1, episode_2, ...
 episode_keys = sorted(log.keys(), key=lambda k: int(k.split("_")[1]))
 data = [log[k] for k in episode_keys]
 
-# Extraction des métriques (math.nan si clé absente pour compatibilité)
 episodes      = [int(k.split("_")[1]) for k in episode_keys]
 epsilons      = [d.get("eps", math.nan) for d in data]
 losses        = [d["loss"] if d.get("loss") is not None else math.nan for d in data]
