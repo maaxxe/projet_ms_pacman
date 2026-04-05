@@ -58,14 +58,14 @@ TOTAL_EPISODES    = 3000*100  ##< Nombre max d'épisodes d'entraînement
 BUFFER_SIZE       = 100_000   ##< Capacité du replay buffer
 BATCH_SIZE        = 32        ##< Taille du mini-batch d'apprentissage
 GAMMA             = 0.99      ##< Facteur de discount (horizon temporel long)
-LR                = 1e-4      ##< Learning rate Adam
+LR                = 2.5e-5      ##< Learning rate Adam (réduit pour rewards non clippées)
 LEARNING_STARTS   = 20_000    ##< Steps avant de commencer l'apprentissage
 TRAIN_FREQ        = 4         ##< 1 step d'apprentissage toutes les N actions
 TARGET_UPDATE_EVERY = 2_000   ##< Fréquence de synchronisation target_net
 EPS_START         = 1.0       ##< Epsilon initial (exploration totale)
 EPS_END           = 0.05      ##< Epsilon minimal (5% exploration résiduelle)
 EPS_DECAY_EPISODES = 1500     ##< Épisodes pour décroître de EPS_START à EPS_END
-MAX_EPISODE_STEPS = 20_000    ##< Limite de steps par épisode
+MAX_EPISODE_STEPS = 5_000    ##< Limite de steps par épisode
 DOTS_LEVEL        = 158       ##< Nombre de gommes pour détecter un niveau fini
 
 # =============================================================================
@@ -165,8 +165,8 @@ TROPHY_BASELINE_ALPHA = 0.01
 
 ## @brief Écart minimum au-dessus de la baseline pour déclencher un boost Trophy.
 #  @details Évite de booster des épisodes marginalement supérieurs à la baseline.
-#           Valeur recommandée : ~10-15% du score moyen observé.
-TROPHY_MIN_DELTA      = 30 
+#           Valeur recommandée : ~10-15% du score moyen observé (adapter selon l'échelle rewards).
+TROPHY_MIN_DELTA      = 5
 
 running = True
 
@@ -296,7 +296,7 @@ def _trophy_active():
 
 
 def train():
-    """ 
+    """
     @brief  Boucle principale d'entraînement DQN MsPacman.
     @details Flux :
              1. Création env + réseaux (Dueling si USE_DUELING_DQN).
@@ -317,7 +317,7 @@ def train():
              8. Log JSON + checkpoint toutes les SAVE_EVERY_EPISODES.
     """
     log_data = load_log()
-    env      = make_train_env(render_mode=None, clip_rewards=True)
+    env      = make_train_env(render_mode=None, clip_rewards=False)
 
     n_actions = env.action_space.n
     obs_shape = env.observation_space.shape
@@ -403,9 +403,12 @@ def train():
                 next_state, reward, term, trunc, info = env.step(action)
                 done = term or trunc
 
-                raw_reward = float(info.get("raw_reward", reward))
-                if raw_reward > 0:     dots_manges  += 1
-                if raw_reward >= 200:  ghosts_eaten += 1
+                raw_reward   = float(info.get("raw_reward", reward))
+                ghost_points = float(info.get("ghost_points", 0.0))
+                dot_count    = int(info.get("dot_count", 0))
+                dots_manges  += dot_count
+                if ghost_points > 0:
+                    ghosts_eaten += 1
 
                 # Push avec episode_id si Trophy Buffer actif
                 if _trophy_active() :

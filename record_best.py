@@ -24,7 +24,7 @@ VIDEO_DIR.mkdir(exist_ok=True)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DOTS_LEVEL = 158
 
-NUM_EPISODES = 100
+NUM_EPISODES = 500
 EPSILON      = 0.0
 FPS          = 30
 MAX_STEPS    = 27_000

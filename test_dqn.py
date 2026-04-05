@@ -98,7 +98,7 @@ def run_episode(policy_net: DQN, env, epsilon: float) -> tuple[float, int, int, 
         next_state, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
 
-        raw_reward = float(info.get("rawreward", reward))
+        raw_reward = float(info.get("raw_reward", reward))
 
         if raw_reward > 0:
             dots_manges += 1

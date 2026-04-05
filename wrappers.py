@@ -2,11 +2,11 @@
 @file      wrappers.py
 @brief     Wrappers Gymnasium pour MsPacman (ALE/MsPacman-v5).
 @details   Chaîne de wrappers appliquée dans make_train_env() :
-           FireResetEnv → MaxAndSkipEnv → LevelClearBonusEnv
-           → ProcessFrame84 → FrameStack(4) → ClipRewardEnv
+           FireResetEnv → MaxAndSkipEnv → ClipRewardEnv (optionnel)
+           → LevelClearBonusEnv → ProcessFrame84 → FrameStack(4)
 
-           Chaque wrapper transforme obs, reward ou reset indépendamment,
-           permettant de les combiner/désactiver facilement.
+           Note : ClipRewardEnv est appliqué AVANT LevelClearBonusEnv
+           afin que le bonus level-clear (50 pts) ne soit pas clippé à 1.
 """
 
 import collections
@@ -34,15 +34,20 @@ def load_level_bonus():
         with open(REWARDS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     else:
-        return {"level_clear_bonus": 50.0, "dots_level": 158, "pastille_normale": 10,"pastille_grosse": 50 }
+        return {
+            "level_clear_bonus": 50.0,
+            "dots_level": 158,
+            "pastille_normale": 10,
+            "pastille_grosse": 50
+        }
 
 
 class LevelClearBonusEnv(gym.Wrapper):
     """
     @class   LevelClearBonusEnv
     @brief   Ajoute un bonus de récompense quand le niveau est terminé.
-    @details Compte les gommes mangées via raw_reward (10=normale, 50=grosse).
-             Quand dots_eaten == config["dots_level"] (158), ajoute level_clear_bonus
+    @details Compte les gommes mangées via info["dot_count"] fourni par MaxAndSkipEnv.
+             Quand dots_eaten >= config["dots_level"] (158), ajoute level_clear_bonus
              à la récompense et remet dots_eaten à 0 pour le niveau suivant.
     """
 
@@ -71,17 +76,18 @@ class LevelClearBonusEnv(gym.Wrapper):
         @return obs, reward (augmenté si level clear), terminated, truncated, info.
         """
         obs, reward, terminated, truncated, info = self.env.step(action)
-        raw_score = info.get("raw_reward", reward)
 
-        # 10 pts = pastille normale | 50 pts = super-pastille
-        if raw_score == self.config["pastille_normale"] or raw_score == self.config["pastille_grosse"]:
-            self.dots_eaten += 1
+      
+        self.dots_eaten += int(info.get("dot_count", 0))
 
         # Bonus injecté quand tous les dots du niveau sont mangés
-        if self.dots_eaten == self.config["dots_level"]:
+        if self.dots_eaten >= self.config["dots_level"]:
             reward += self.config["level_clear_bonus"]
-            print(f"\033[93m[REWARD] Jackpot Level Clear ! (+{self.config['level_clear_bonus']})\033[0m")
-            self.dots_eaten = 0  # Reset pour le niveau 2
+            print(
+                f"\033[93m[REWARD] Jackpot Level Clear ! "
+                f"(+{self.config['level_clear_bonus']})\033[0m"
+            )
+            self.dots_eaten = 0  # Reset pour le niveau suivant
 
         return obs, reward, terminated, truncated, info
 
@@ -131,6 +137,7 @@ class MaxAndSkipEnv(gym.Wrapper):
         super().__init__(env)
         self._skip = skip
         self._obs_buffer = collections.deque(maxlen=2)
+        self.config = load_level_bonus()
 
     def step(self, action):
         """
@@ -139,14 +146,32 @@ class MaxAndSkipEnv(gym.Wrapper):
         @return max_frame, total_reward, terminated, truncated, info (+ raw_reward).
         """
         total_reward = 0.0
+        total_custom_reward = 0.0
+        ghost_points = 0.0
         terminated = False
         truncated = False
+        dot_count = 0
         info = {}
 
         for _ in range(self._skip):
             obs, reward, terminated, truncated, info = self.env.step(action)
             self._obs_buffer.append(obs)
             total_reward += reward
+            r = float(reward)
+            
+            custom_r = 0.0
+            if r == 10.0:
+                dot_count += 1
+                custom_r += self.config.get("pastille_normale", 15.0)
+            elif r == 50.0:
+                dot_count += 1
+                custom_r += self.config.get("pastille_grosse", 50.0)
+            elif r in (200.0, 400.0, 800.0, 1600.0):
+                ghost_points += r
+                custom_r += self.config.get("ghost", 0.0)
+            
+            total_custom_reward += custom_r
+
             if terminated or truncated:
                 break
 
@@ -156,11 +181,14 @@ class MaxAndSkipEnv(gym.Wrapper):
             max_frame = self._obs_buffer[-1]
 
         info = dict(info)
-        info["raw_reward"] = float(total_reward)  # Score brut (non-clippé)
-        return max_frame, total_reward, terminated, truncated, info
+        info["raw_reward"]   = float(total_reward)
+        info["ghost_points"] = float(ghost_points)
+        info["dot_count"]    = dot_count
+        return max_frame, total_custom_reward, terminated, truncated, info
 
     def reset(self, **kwargs):
         """@brief Reset + vide le buffer de frames."""
+        self.config = load_level_bonus()
         self._obs_buffer.clear()
         obs, info = self.env.reset(**kwargs)
         self._obs_buffer.append(obs)
@@ -178,7 +206,9 @@ class ProcessFrame84(gym.ObservationWrapper):
     def __init__(self, env):
         """@param env Environnement à wrapper."""
         super().__init__(env)
-        self.observation_space = spaces.Box(low=0, high=255, shape=(84, 84), dtype=np.uint8)
+        self.observation_space = spaces.Box(
+            low=0, high=255, shape=(84, 84), dtype=np.uint8
+        )
 
     def observation(self, obs):
         """
@@ -221,7 +251,11 @@ class FrameStack(gym.Wrapper):
         return self._get_obs(), info
 
     def step(self, action):
-        """@brief Step + ajoute la nouvelle obs au buffer."""
+        """
+        @brief  Step + ajoute la nouvelle obs au buffer.
+        @return (k, H, W) stacked obs, reward, terminated, truncated, info.
+        """
+    
         obs, reward, terminated, truncated, info = self.env.step(action)
         self.frames.append(obs)
         return self._get_obs(), reward, terminated, truncated, info
@@ -243,7 +277,34 @@ class ClipRewardEnv(gym.RewardWrapper):
         """@brief Retourne np.sign(reward) : -1, 0 ou +1."""
         return np.sign(reward)
 
+class LifeLostPenaltyEnv(gym.Wrapper):
+    """
+    @class   LifeLostPenaltyEnv
+    @brief   Injecte une pénalité quand Pacman perd une vie.
+    @details ALE retourne info["lives"] à chaque step. Quand ce compteur
+             diminue, on ajoute penalty à la récompense.
+             Placé APRÈS ClipRewardEnv pour que la pénalité ne soit pas
+             clippée à np.sign(-1) = -1 (déjà -1, ça change rien dans ce cas,
+             mais l'intention est explicite).
+    """
 
+    def __init__(self, env, penalty=-1.0):
+        super().__init__(env)
+        self.penalty = penalty
+        self.lives = 0
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self.lives = info.get("lives", 0)
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        current_lives = info.get("lives", self.lives)
+        if current_lives < self.lives:
+            reward += self.penalty
+        self.lives = current_lives
+        return obs, reward, terminated, truncated, info
 def _make_base_env(render_mode=None):
     """
     @brief  Crée l'environnement ALE MsPacman de base.
@@ -264,22 +325,20 @@ def _make_base_env(render_mode=None):
     return env
 
 
-def make_train_env(render_mode=None, clip_rewards=True):
+def make_train_env(render_mode=None, clip_rewards=False):
     """
     @brief  Construit l'environnement complet pour l'entraînement.
     @param  render_mode   Mode rendu (None = headless).
-    @param  clip_rewards  Si True, clippe rewards à {-1,0,+1} .
+    @param  clip_rewards  Non utilisé (désactivé). Les récompenses proviennent de reward.json via MaxAndSkipEnv.
     @return env Gymnasium prêt pour DQN.
     """
     env = _make_base_env(render_mode=render_mode)
     env = FireResetEnv(env)
     env = MaxAndSkipEnv(env, skip=4)
-    if clip_rewards:
-        env = ClipRewardEnv(env)       
-    env = LevelClearBonusEnv(env) 
+    env = LifeLostPenaltyEnv(env, penalty=-1.0)  
+    env = LevelClearBonusEnv(env)
     env = ProcessFrame84(env)
     env = FrameStack(env, k=4)
-   
     return env
 
 

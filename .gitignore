@@ -9,3 +9,7 @@ log.json
 docs/html/
 docs/latex/
 Doxyfile
+
+# IDE
+.vscode/
+.idea/
